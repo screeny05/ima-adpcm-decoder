@@ -1,0 +1,26 @@
+{
+  "name": "ima-adpcm-decoder",
+  "version": "1.0.0",
+  "description": "Decode IMA ADPCM WAV Files to AudioContext",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --declaration",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "ima",
+    "adpcm",
+    "audio",
+    "audiocontext",
+    "decoder"
+  ],
+  "author": "Sebastian Langer <sl@scn.cx>",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^4.1.2"
+  },
+  "dependencies": {
+    "wavefile": "^11.0.0"
+  }
+}

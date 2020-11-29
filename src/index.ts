@@ -1,6 +1,6 @@
 import { WaveFile } from 'wavefile';
 import { uint8ToInt16, int16ToFloat, clamp, clampInt16 } from './math';
-import loader from '@assemblyscript/loader';
+import loader, { ASUtil, ResultObject } from '@assemblyscript/loader';
 
 const WAV_FORMAT_IMA = 17;
 
@@ -41,52 +41,121 @@ const INDEX_TABLE: number[] = [
     -1, -1, -1, -1, 2, 4, 6, 8,
 ];
 
-/**
- * Decode a buffer containing an ADPCM wavefile into a usable AudioBuffer
- *
- * @param ctx {AudioContext}
- * @param buffer {ArrayBuffer} input ADPCM file buffer
- */
-export const decodeImaAdpcm = async (ctx: AudioContext, buffer: ArrayBuffer): Promise<AudioBuffer> => {
-    const wav = new WaveFile(new Uint8Array(buffer));
+declare type WasmExports = {
+    Uint8Array_ID: number,
+    decode(inbufPtr: number, channelCount: number, blockSize: number): number;
+    decodeBlock(inbufPtr: number, blockCount: number, blockSize: number, outbufsPtr: number, outbufOffset: number): number;
+}
 
-    const fmt = wav.fmt as WavFmtSubchunk;
-    const data = wav.data as WavDataSubchunk;
+interface WavData {
+    channelCount: number;
+    samples: Uint8Array;
+    blockSize: number;
+    sampleRate: number
+}
 
-    if(fmt.audioFormat !== WAV_FORMAT_IMA){
-        throw new TypeError('Given wav buffer is not of format IMA ADPCM');
+let perf = 0;
+let perfCount = 0;
+let perfAccum = 0;
+const perfStart = () => {perf = performance.now();perfCount++;};
+const perfEnd = () => perfAccum += performance.now() - perf;
+const perfReset = () => {perf=0;perfCount=0;perfAccum=0;};
+const perfLog = () => console.log('p', perfAccum/perfCount);
+
+export class AdpcmDecoder {
+    wasm: ResultObject & { exports: ASUtil & WasmExports };
+
+    async initWasm(){
+        const asmReq = await fetch('./untouched.wasm');
+        const asmBuffer = await asmReq.arrayBuffer();
+
+        let perf = 0;
+        this.wasm = await loader.instantiate<WasmExports>(asmBuffer, {
+            index: {
+                log: (stringPtr: number) => console.log(__getString(stringPtr)),
+                perfStart,
+                perfEnd,
+                perfReset,
+                perfLog
+            }
+        });
+
+        const { __getString } = this.wasm.exports;
     }
 
-    // ima = 2sample/byte
-    const targetAudioBuffer = ctx.createBuffer(fmt.numChannels, data.samples.length * 2 / fmt.numChannels, fmt.sampleRate);
-    const targetData = getChannelBuffers(targetAudioBuffer);
-    const imaBlocks = chunkArrayBufferView(data.samples, fmt.blockAlign);
+    /**
+     * Decode a buffer containing an ADPCM wavefile into a usable AudioBuffer
+     *
+     * @param ctx {AudioContext}
+     * @param buffer {ArrayBuffer} input ADPCM file buffer
+     */
+    decodeImaAdpcm(ctx: AudioContext, buffer: ArrayBuffer, preferJsDecoder: boolean = false): AudioBuffer {
+        const wav = this.extractWav(buffer);
 
-    let outbufOffset = 0;
-    let samplesPerBlock = (fmt.blockAlign - fmt.numChannels * 4) * (fmt.numChannels ^ 3) + 1;
+        // ima = 2sample/byte
+        const targetAudioBuffer = ctx.createBuffer(wav.channelCount, wav.samples.length * 2 / wav.channelCount, wav.sampleRate);
+        const targetData = getChannelBuffers(targetAudioBuffer);
 
-    imaBlocks.forEach(block => {
-        outbufOffset = decodeImaAdpcmBlock(block, targetData, outbufOffset);
-    });
+        if(preferJsDecoder || !this.wasm){
+            this.decodeImaAdpcmJs(wav.samples, wav.blockSize, targetData);
+        } else {
+            this.decodeImaAdpcmWasm(wav.samples, wav.blockSize, targetData);
+        }
 
-    const asmReq = await fetch('./untouched.wasm');
-    const asmBuffer = await asmReq.arrayBuffer();
-    const wasm = await loader.instantiate(asmBuffer, { index: { log(stringPtr){console.log(__getString(stringPtr))} } });
-    const { __retain, __release, __newArray, __getArray, __getArrayView, __getString } = wasm.exports;
-    const bufferData = Array.from(data.samples);
+        return targetAudioBuffer;
+    }
 
-    const arrayPtr = __retain(__newArray(wasm.exports.Uint8Array_ID, bufferData));
-    const resultPtr = wasm.exports.decode(arrayPtr, fmt.numChannels, fmt.blockAlign);
+    extractWav(buffer: ArrayBuffer): WavData {
+        const wav = new WaveFile(new Uint8Array(buffer));
 
-    __getArray(resultPtr).map((ptr, channel) => {
-        const data = __getArrayView(ptr);
-        // copy data over
-        data.forEach((d,i) => targetData[channel][i] = d);
-    });
-    __release(arrayPtr);
+        const fmt = wav.fmt as WavFmtSubchunk;
+        const data = wav.data as WavDataSubchunk;
 
-    return targetAudioBuffer;
-};
+        if(fmt.audioFormat !== WAV_FORMAT_IMA){
+            throw new TypeError('Given wav buffer is not of format IMA ADPCM');
+        }
+
+        return {
+            channelCount: fmt.numChannels,
+            samples: data.samples,
+            blockSize: fmt.blockAlign,
+            sampleRate: fmt.sampleRate
+        };
+    }
+
+    decodeImaAdpcmWasm(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
+        if(!this.wasm){
+            throw new Error('Wasm not initialized');
+        }
+
+        const { __retain, __release, __newArray, __getArray, __getArrayView } = this.wasm.exports;
+
+        const start1 = performance.now();
+        const arrayPtr = __retain(__newArray(this.wasm.exports.Uint8Array_ID, adpcmSamples));
+        //console.log('js->native', performance.now() - start1);
+        const start2 = performance.now();
+        const resultPtr = this.wasm.exports.decode(arrayPtr, outbufs.length, blockSize);
+        //console.log('decode', performance.now() - start2);
+
+        const start3 = performance.now();
+        __getArray(resultPtr).map((ptr, channel) => {
+            const data = __getArrayView(ptr) as Float32Array;
+            outbufs[channel].set(data);
+        });
+        __release(arrayPtr);
+        //console.log('native->js', performance.now() - start3)
+    }
+
+    decodeImaAdpcmJs(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
+        const imaBlocks = chunkArrayBufferView(adpcmSamples, blockSize);
+        let outbufOffset = 0;
+perfReset()
+        imaBlocks.forEach((block, i) => {
+            outbufOffset = decodeImaAdpcmBlock(block, outbufs, outbufOffset, i * blockSize);
+        });
+perfLog();
+    }
+}
 
 /**
  * Extract PCM buffers from AudioBuffer
@@ -111,7 +180,7 @@ const getChannelBuffers = (buffer: AudioBuffer): Float32Array[] => {
  * @param outbufs {Float32Array[]} output buffer for decoded PCM samples
  * @param outbufOffset {number} offset at which to add samples
  */
-export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], outbufOffset: number): number => {
+export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], outbufOffset: number, chunkOffset: number): number => {
     const channels = outbufs.length;
 
     let inbufOffset = 0;
@@ -136,6 +205,7 @@ export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], 
     while(chunks--){
         for (let ch = 0; ch < channels; ch++) {
             for (let i = 0; i < 4; i++) {
+                perfStart()
                 let step = STEP_TABLE[index[ch]];
                 let delta = step >> 3;
 
@@ -180,6 +250,7 @@ export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], 
                 index[ch] = clamp(index[ch], 0, 88);
                 pcmData[ch] = clampInt16(pcmData[ch]);
                 outbufs[ch][outbufOffset + (i * 2 + 1)] = int16ToFloat(pcmData[ch]);
+                perfEnd()
 
                 inbufOffset++;
             }

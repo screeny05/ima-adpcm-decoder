@@ -1,6 +1,10 @@
 export const Uint8Array_ID = idof<Uint8Array>();
 
 declare function log(str: string): void;
+declare function perfStart(): void;
+declare function perfEnd(): void;
+declare function perfReset(): void;
+declare function perfLog(): void;
 
 const STEP_TABLE: i32[] = [
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -22,27 +26,28 @@ const INDEX_TABLE: i8[] = [
 export function decode(inbuf: Uint8Array, channelCount: i32, blockSize: i32): Float32Array[] {
     const blockCount = <i32>Math.floor(inbuf.length / blockSize);
     let outbufOffset = 0;
-
     const outbufs: Float32Array[] = [];
     for (let ch = 0; ch < channelCount; ch++) {
         outbufs.push(new Float32Array(inbuf.length * 2 / channelCount));
     }
-
     for (let i = 0; i < blockCount; i++) {
-        const blockData = inbuf.slice(i * blockSize, i * blockSize + blockSize);
-        outbufOffset = decodeBlock(blockData, 0, outbufs, outbufOffset);
+        outbufOffset = decodeBlock(inbuf, i, blockSize, outbufs, outbufOffset);
     }
+    perfLog();
 
     return outbufs;
 }
 
-export function decodeBlock(inbuf: Uint8Array, inbufOffset: i32, outbufs: Float32Array[], outbufOffset: i32): i32 {
-    const channelCount = outbufs.length;
+export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, outbufs: Float32Array[], outbufOffset: i32): i32 {
+    const blockStart: i32 = blockCount * blockSize;
+    const channelCount: i32 = outbufs.length;
     const pcmData: i32[] = [0, 0];
     const index: i8[] = [0, 0];
 
+    let inbufOffset: i32 = blockStart;
+
     for (let ch = 0; ch < outbufs.length; ch++) {
-        pcmData[ch] = <i16>(inbuf[inbufOffset] | (inbuf[inbufOffset + 1] << 8));
+        pcmData[ch] = <i16>(<i16>inbuf[inbufOffset] | (<i16>inbuf[inbufOffset + 1] << 8));
         outbufs[ch][outbufOffset] = i16Tof32(<i16>pcmData[ch]);
         index[ch] = inbuf[inbufOffset + 2];
 
@@ -53,15 +58,16 @@ export function decodeBlock(inbuf: Uint8Array, inbufOffset: i32, outbufs: Float3
     }
     outbufOffset++;
 
-    let chunks = (inbuf.length - inbufOffset) / (channelCount * 4);
+    let chunks = (blockSize - inbufOffset + blockStart) / (channelCount * 4);
 
     while(chunks--){
         for (let ch = 0; ch < channelCount; ch++) {
             for (let i = 0; i < 4; i++) {
-                let step = STEP_TABLE[index[ch]];
-                let delta = step >> 3;
+                perfStart()
+                let step: i32 = STEP_TABLE[index[ch]];
+                let delta: i32 = step >> 3;
 
-                let data = inbuf[inbufOffset];
+                let data: i8 = inbuf[inbufOffset];
                 if(data & 1){
                     delta += (step >> 2);
                 }
@@ -102,6 +108,7 @@ export function decodeBlock(inbuf: Uint8Array, inbufOffset: i32, outbufs: Float3
                 index[ch] = clampi8(index[ch], 0, 88);
                 pcmData[ch] = clampi32(pcmData[ch], i16.MIN_VALUE, i16.MAX_VALUE);
                 outbufs[ch][outbufOffset + (i * 2 + 1)] = i16Tof32(<i16>pcmData[ch]);
+                perfEnd()
 
                 inbufOffset++;
             }
@@ -113,13 +120,16 @@ export function decodeBlock(inbuf: Uint8Array, inbufOffset: i32, outbufs: Float3
     return outbufOffset;
 }
 
+
 function i16Tof32(val: i16): f32 {
     return val / <f32>i16.MAX_VALUE;
 }
 
+
 function clampi8(val: i8, min: i8, max: i8): i8 {
     return val > max ? max : val < min ? min : val;
 }
+
 
 function clampi32(val: i32, min: i32, max: i32): i32 {
     return val > max ? max : val < min ? min : val;

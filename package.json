@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc --declaration",
     "prepare": "npm run build",
-    "asbuild": "asc assembly/index.ts --target debug --runtime full --sourceMap",
+    "asproduction": "asc assembly/index.ts --target release -O3 --runtime full",
+    "asbuild": "asc assembly/index.ts --target debug --debug --runtime full --sourceMap http://localhost:1234/untouched.wasm.map",
     "aswatch": "npm run asbuild && chokidar 'assembly/*.ts' -c 'npm run asbuild'",
     "browser": "parcel src/test/*"
   },

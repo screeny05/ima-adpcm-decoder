@@ -14,9 +14,9 @@ const bufferToCanvas = (el: HTMLCanvasElement, buffer: Float32Array): void => {
     });
 };
 
-const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDecoder, js: boolean = false) => {
+const decodeTest = async (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDecoder, js: boolean = false) => {
     const start = performance.now();
-    const buffer = decoder.decodeImaAdpcm(ctx, wavBuffer, js);
+    const buffer = await decoder.decodeImaAdpcm(ctx, wavBuffer, js);
     console.log(js ? 'JS:' : 'WASM:', performance.now() - start);
     return buffer;
 }
@@ -30,10 +30,10 @@ const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDec
     const decoder = new AdpcmDecoder();
     await decoder.initWasm();
 
-    const audioBuffer = decodeTest(ctx, wavBuffer, decoder);
+    const audioBuffer = await decodeTest(ctx, wavBuffer, decoder);
 
     const wasmData = new Float32Array(audioBuffer.getChannelData(0));
-    const jsData = new Float32Array(decodeTest(ctx, wavBuffer, decoder, true).getChannelData(0));
+    const jsData = new Float32Array((await decodeTest(ctx, wavBuffer, decoder, true)).getChannelData(0));
 
     let diffCount = 0;
     wasmData.forEach((val, i) => {
@@ -47,13 +47,13 @@ const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDec
 
     console.log('total diffs', diffCount, `${Math.round(diffCount / jsData.length * 100)}%`);
 
-    //bufferToCanvas(a, wasmData);
-    //bufferToCanvas(c, jsData);
-
     const src = ctx.createBufferSource();
     src.buffer = audioBuffer;
     src.connect(ctx.destination);
     src.start(0);
 
-    b.addEventListener('click', () => src.stop());
+    //bufferToCanvas(a, wasmData);
+    //bufferToCanvas(c, jsData);
+
+    b.addEventListener('click', () => src.start());
 })();

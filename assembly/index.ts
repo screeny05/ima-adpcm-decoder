@@ -1,10 +1,12 @@
 export const Uint8Array_ID = idof<Uint8Array>();
 
+// Declare heap with space for locals
+export const heapBase = __heap_base + 0x1000;
+
+const ERR_SANITY_CHECK = 'Something is wrong with your wav';
+
+// Used for debugging
 declare function log(str: string): void;
-declare function perfStart(): void;
-declare function perfEnd(): void;
-declare function perfReset(): void;
-declare function perfLog(): void;
 
 const STEP_TABLE: i32[] = [
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -23,36 +25,44 @@ const INDEX_TABLE: i8[] = [
     -1, -1, -1, -1, 2, 4, 6, 8,
 ];
 
-export function decode(inbuf: Uint8Array, channelCount: i32, blockSize: i32): Float32Array[] {
-    const blockCount = <i32>Math.floor(inbuf.length / blockSize);
-    let outbufOffset = 0;
-    const outbufs: Float32Array[] = [];
-    for (let ch = 0; ch < channelCount; ch++) {
-        outbufs.push(new Float32Array(inbuf.length * 2 / channelCount));
-    }
-    for (let i = 0; i < blockCount; i++) {
-        outbufOffset = decodeBlock(inbuf, i, blockSize, outbufs, outbufOffset);
-    }
-    perfLog();
+export function decode(channelCount: i32, blockSize: i32, sampleSize: i32): usize {
+    const blockCount = floor(sampleSize / blockSize);
+    const heapOutOffset = heapBase + sampleSize;
+    const outbufByteSize = sampleSize * 2 / channelCount * 4;
+    const chunksPerBlock = (blockSize - channelCount * 4) / (channelCount * 4);
 
-    return outbufs;
+    // This can be reworked once threading lands in wasm
+    for (let i = 0; i < blockCount; i++) {
+        const outbufOffset = (1 + (8 * chunksPerBlock)) * i;
+        decodeBlock(i, blockSize, outbufOffset, channelCount, heapOutOffset, outbufByteSize);
+    }
+    return heapOutOffset;
 }
 
-export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, outbufs: Float32Array[], outbufOffset: i32): i32 {
+@inline
+function storeOutbuf(heapOutOffset: usize, outbufByteSize: i32, channel: i32, offset: i32, value: f32): void {
+    store<f32>(heapOutOffset + (outbufByteSize * channel) + (offset * 4), value);
+}
+
+@inline
+function loadInbuf(offset: usize): u8 {
+    return atomic.load<u8>(heapBase + offset);
+}
+
+export function decodeBlock(blockCount: i32, blockSize: i32, outbufOffset: i32, channelCount: i32, heapOutOffset: usize, outbufByteSize: i32): void {
     const blockStart: i32 = blockCount * blockSize;
-    const channelCount: i32 = outbufs.length;
     const pcmData: i32[] = [0, 0];
     const index: i8[] = [0, 0];
 
     let inbufOffset: i32 = blockStart;
 
-    for (let ch = 0; ch < outbufs.length; ch++) {
-        pcmData[ch] = <i16>(<i16>inbuf[inbufOffset] | (<i16>inbuf[inbufOffset + 1] << 8));
-        outbufs[ch][outbufOffset] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
-        index[ch] = inbuf[inbufOffset + 2];
+    for (let ch = 0; ch < channelCount; ch++) {
+        pcmData[ch] = <i16>(<i16>loadInbuf(inbufOffset) | <i16>loadInbuf(inbufOffset + 1) << 8);
+        storeOutbuf(heapOutOffset, outbufByteSize, ch, outbufOffset, <i16>pcmData[ch] / <f32>i16.MAX_VALUE);
+        index[ch] = loadInbuf(inbufOffset + 2);
 
-        if(index[ch] < 0 || index[ch] > 88 || inbuf[inbufOffset + 3] !== 0){
-            throw new Error('Something is wrong with your wav');
+        if(index[ch] < 0 || index[ch] > 88 || loadInbuf(inbufOffset + 3) !== 0){
+            throw new Error(ERR_SANITY_CHECK);
         }
         inbufOffset += 4;
     }
@@ -63,11 +73,10 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
     while(chunks--){
         for (let ch = 0; ch < channelCount; ch++) {
             for (let i = 0; i < 4; i++) {
-                perfStart()
                 let step: i32 = STEP_TABLE[index[ch]];
                 let delta: i32 = step >> 3;
 
-                let data: i8 = inbuf[inbufOffset];
+                let data: i8 = loadInbuf(inbufOffset);
                 if(data & 1){
                     delta += (step >> 2);
                 }
@@ -84,7 +93,7 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
                 index[ch] += INDEX_TABLE[data & 0x7];
                 index[ch] = min(max(index[ch], 0), 88);
                 pcmData[ch] = min(max(pcmData[ch], i16.MIN_VALUE), i16.MAX_VALUE);
-                outbufs[ch][outbufOffset + (i * 2)] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
+                storeOutbuf(heapOutOffset, outbufByteSize, ch, outbufOffset + (i * 2), <i16>pcmData[ch] / <f32>i16.MAX_VALUE);
 
                 // Sample 2
                 step = STEP_TABLE[index[ch]];
@@ -107,8 +116,7 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
                 index[ch] += INDEX_TABLE[(data >> 4) & 0x7];
                 index[ch] = min(max(index[ch], 0), 88);
                 pcmData[ch] = min(max(pcmData[ch], i16.MIN_VALUE), i16.MAX_VALUE);
-                outbufs[ch][outbufOffset + (i * 2 + 1)] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
-                perfEnd()
+                storeOutbuf(heapOutOffset, outbufByteSize, ch, outbufOffset + (i * 2 + 1), <i16>pcmData[ch] / <f32>i16.MAX_VALUE);
 
                 inbufOffset++;
             }
@@ -116,6 +124,4 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
 
         outbufOffset += 8;
     }
-
-    return outbufOffset;
 }

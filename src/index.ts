@@ -43,7 +43,8 @@ const INDEX_TABLE: number[] = [
 
 declare type WasmExports = {
     Uint8Array_ID: number,
-    decode(inbufPtr: number, channelCount: number, blockSize: number): number;
+    heapBase: WebAssembly.Global,
+    decode(channelCount: number, blockSize: number, sampleSize: number): number;
     decodeBlock(inbufPtr: number, blockCount: number, blockSize: number, outbufsPtr: number, outbufOffset: number): number;
 }
 
@@ -64,23 +65,35 @@ const perfLog = () => console.log('p', perfAccum/perfCount);
 
 export class AdpcmDecoder {
     wasm: ResultObject & { exports: ASUtil & WasmExports };
+    wasmBuffer: ArrayBuffer;
 
-    async initWasm(){
+    async loadWasm(){
         const asmReq = await fetch('./untouched.wasm');
-        const asmBuffer = await asmReq.arrayBuffer();
+        this.wasmBuffer = await asmReq.arrayBuffer();
+    }
 
-        let perf = 0;
-        this.wasm = await loader.instantiate<WasmExports>(asmBuffer, {
+    async instWasm(memoryInitial: number){
+        const memory = new WebAssembly.Memory({ initial: memoryInitial, maximum: memoryInitial, shared: true });
+        const inst = await loader.instantiate<WasmExports>(this.wasmBuffer, {
             index: {
                 log: (stringPtr: number) => console.log(__getString(stringPtr)),
-                perfStart,
+                /*perfStart,
                 perfEnd,
                 perfReset,
-                perfLog
+                perfLog*/
+            },
+            env: {
+                memory
             }
         });
 
-        const { __getString } = this.wasm.exports;
+        const { __getString } = inst.exports;
+
+        return { inst, memory };
+    }
+
+    async initWasm(){
+        await this.loadWasm();
     }
 
     /**
@@ -89,17 +102,17 @@ export class AdpcmDecoder {
      * @param ctx {AudioContext}
      * @param buffer {ArrayBuffer} input ADPCM file buffer
      */
-    decodeImaAdpcm(ctx: AudioContext, buffer: ArrayBuffer, preferJsDecoder: boolean = false): AudioBuffer {
+    async decodeImaAdpcm(ctx: AudioContext, buffer: ArrayBuffer, preferJsDecoder: boolean = false): Promise<AudioBuffer> {
         const wav = this.extractWav(buffer);
 
         // ima = 2sample/byte
         const targetAudioBuffer = ctx.createBuffer(wav.channelCount, wav.samples.length * 2 / wav.channelCount, wav.sampleRate);
         const targetData = getChannelBuffers(targetAudioBuffer);
 
-        if(preferJsDecoder || !this.wasm){
+        if(preferJsDecoder){
             this.decodeImaAdpcmJs(wav.samples, wav.blockSize, targetData);
         } else {
-            this.decodeImaAdpcmWasm(wav.samples, wav.blockSize, targetData);
+            await this.decodeImaAdpcmWasm(wav.samples, wav.blockSize, targetData);
         }
 
         return targetAudioBuffer;
@@ -123,38 +136,89 @@ export class AdpcmDecoder {
         };
     }
 
-    decodeImaAdpcmWasm(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
-        if(!this.wasm){
-            throw new Error('Wasm not initialized');
-        }
+    async decodeImaAdpcmWasm(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): Promise<void> {
+        const byteSize = adpcmSamples.length + outbufs.reduce((a, v) => v.length * v.BYTES_PER_ELEMENT + a, 0);
 
-        const { __retain, __release, __newArray, __getArray, __getArrayView } = this.wasm.exports;
+        const { inst: wasm, memory } = await this.instWasm(((byteSize + 0xffff + 0x1000) & ~0xffff) >>> 16);
 
+        const memoryView = new Uint8Array(memory.buffer);
         const start1 = performance.now();
-        const arrayPtr = __retain(__newArray(this.wasm.exports.Uint8Array_ID, adpcmSamples));
-        //console.log('js->native', performance.now() - start1);
-        const start2 = performance.now();
-        const resultPtr = this.wasm.exports.decode(arrayPtr, outbufs.length, blockSize);
-        //console.log('decode', performance.now() - start2);
+        memoryView.set(adpcmSamples, wasm.exports.heapBase.value);
+        console.log('js->wasm', performance.now() - start1);
 
         const start3 = performance.now();
-        __getArray(resultPtr).map((ptr, channel) => {
-            const data = __getArrayView(ptr) as Float32Array;
-            outbufs[channel].set(data);
-            __release(ptr);
+        //const outbufOffset = wasm.exports.decode(outbufs.length, blockSize, adpcmSamples.length);
+        console.log('decode', performance.now() - start3);
+
+        // Initialize workers
+        let heapBase;
+
+        const workers = new Array(2).fill(0).map(() => new Worker('./worker.ts'));
+        await Promise.all(workers.map(worker => new Promise(resolve => {
+            worker.postMessage({
+                eventType: 'INITIALISE',
+                memory: memory,
+            });
+
+            worker.addEventListener('message', ({ data }) => {
+                if(data.eventType === 'INITIALISE_DONE'){
+                    heapBase = data.heapBase;
+                    resolve();
+                }
+            });
+        })));
+
+        const channelCount = outbufs.length;
+        const chunksPerBlock = (blockSize - channelCount * 4) / (channelCount * 4);
+
+
+        const decodeWorker = async (blockCount) => new Promise<void>(resolve => {
+            const outbufOffset = (1 + (8 * chunksPerBlock)) * blockCount;
+            const worker = workers[blockCount % workers.length];
+
+            worker.postMessage({
+                eventType: 'DECODE_BLOCK',
+                blockCount,
+                blockSize,
+                channelCount,
+                outbufOffset,
+                outbufByteSize: adpcmSamples.length * 2 / channelCount * 4,
+                sampleSize: adpcmSamples.length
+            });
+
+            const listener = ({ data }) => {
+                if(data.eventType === 'DECODE_BLOCK_DONE' && data.blockCount === blockCount){
+                    worker.removeEventListener('message', listener);
+                    resolve();
+                }
+            };
+
+            worker.addEventListener('message', listener);
         });
-        __release(arrayPtr);
-        //console.log('native->js', performance.now() - start3)
+
+        const queue: Promise<void>[] = [];
+
+        const blockCount = Math.floor(adpcmSamples.length / blockSize);
+        for (let i = 0; i < blockCount; i++) {
+            queue.push(decodeWorker(i));
+        }
+
+        await Promise.all(queue);
+
+        const start2 = performance.now();
+        outbufs.forEach((outbuf, ch) => {
+            const channelData = new Float32Array(memory.buffer, heapBase + adpcmSamples.length + (outbuf.length * outbuf.BYTES_PER_ELEMENT * ch), outbuf.length);
+            outbuf.set(channelData);
+        });
+        console.log('wasm->js', performance.now() - start2);
     }
 
     decodeImaAdpcmJs(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
         const imaBlocks = chunkArrayBufferView(adpcmSamples, blockSize);
         let outbufOffset = 0;
-perfReset()
         imaBlocks.forEach((block, i) => {
             outbufOffset = decodeImaAdpcmBlock(block, outbufs, outbufOffset, i * blockSize);
         });
-perfLog();
     }
 }
 
@@ -206,7 +270,6 @@ export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], 
     while(chunks--){
         for (let ch = 0; ch < channels; ch++) {
             for (let i = 0; i < 4; i++) {
-                perfStart()
                 let step = STEP_TABLE[index[ch]];
                 let delta = step >> 3;
 
@@ -251,7 +314,6 @@ export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], 
                 index[ch] = clamp(index[ch], 0, 88);
                 pcmData[ch] = clampInt16(pcmData[ch]);
                 outbufs[ch][outbufOffset + (i * 2 + 1)] = int16ToFloat(pcmData[ch]);
-                perfEnd()
 
                 inbufOffset++;
             }

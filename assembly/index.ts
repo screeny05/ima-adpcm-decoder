@@ -48,7 +48,7 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
 
     for (let ch = 0; ch < outbufs.length; ch++) {
         pcmData[ch] = <i16>(<i16>inbuf[inbufOffset] | (<i16>inbuf[inbufOffset + 1] << 8));
-        outbufs[ch][outbufOffset] = i16Tof32(<i16>pcmData[ch]);
+        outbufs[ch][outbufOffset] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
         index[ch] = inbuf[inbufOffset + 2];
 
         if(index[ch] < 0 || index[ch] > 88 || inbuf[inbufOffset + 3] !== 0){
@@ -82,9 +82,9 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
                 }
                 pcmData[ch] += delta;
                 index[ch] += INDEX_TABLE[data & 0x7];
-                index[ch] = clampi8(index[ch], 0, 88);
-                pcmData[ch] = clampi32(pcmData[ch], i16.MIN_VALUE, i16.MAX_VALUE);
-                outbufs[ch][outbufOffset + (i * 2)] = i16Tof32(<i16>pcmData[ch]);
+                index[ch] = min(max(index[ch], 0), 88);
+                pcmData[ch] = min(max(pcmData[ch], i16.MIN_VALUE), i16.MAX_VALUE);
+                outbufs[ch][outbufOffset + (i * 2)] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
 
                 // Sample 2
                 step = STEP_TABLE[index[ch]];
@@ -105,9 +105,9 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
 
                 pcmData[ch] += delta;
                 index[ch] += INDEX_TABLE[(data >> 4) & 0x7];
-                index[ch] = clampi8(index[ch], 0, 88);
-                pcmData[ch] = clampi32(pcmData[ch], i16.MIN_VALUE, i16.MAX_VALUE);
-                outbufs[ch][outbufOffset + (i * 2 + 1)] = i16Tof32(<i16>pcmData[ch]);
+                index[ch] = min(max(index[ch], 0), 88);
+                pcmData[ch] = min(max(pcmData[ch], i16.MIN_VALUE), i16.MAX_VALUE);
+                outbufs[ch][outbufOffset + (i * 2 + 1)] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
                 perfEnd()
 
                 inbufOffset++;
@@ -118,19 +118,4 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
     }
 
     return outbufOffset;
-}
-
-
-function i16Tof32(val: i16): f32 {
-    return val / <f32>i16.MAX_VALUE;
-}
-
-
-function clampi8(val: i8, min: i8, max: i8): i8 {
-    return val > max ? max : val < min ? min : val;
-}
-
-
-function clampi32(val: i32, min: i32, max: i32): i32 {
-    return val > max ? max : val < min ? min : val;
 }

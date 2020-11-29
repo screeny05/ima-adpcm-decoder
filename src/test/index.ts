@@ -17,7 +17,7 @@ const bufferToCanvas = (el: HTMLCanvasElement, buffer: Float32Array): void => {
 const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDecoder, js: boolean = false) => {
     const start = performance.now();
     const buffer = decoder.decodeImaAdpcm(ctx, wavBuffer, js);
-    //console.log(js ? 'JS:' : 'WASM:', performance.now() - start);
+    console.log(js ? 'JS:' : 'WASM:', performance.now() - start);
     return buffer;
 }
 

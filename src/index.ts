@@ -141,6 +141,7 @@ export class AdpcmDecoder {
         __getArray(resultPtr).map((ptr, channel) => {
             const data = __getArrayView(ptr) as Float32Array;
             outbufs[channel].set(data);
+            __release(ptr);
         });
         __release(arrayPtr);
         //console.log('native->js', performance.now() - start3)

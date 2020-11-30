@@ -1,10 +1,6 @@
 export const Uint8Array_ID = idof<Uint8Array>();
 
 declare function log(str: string): void;
-declare function perfStart(): void;
-declare function perfEnd(): void;
-declare function perfReset(): void;
-declare function perfLog(): void;
 
 const STEP_TABLE: i32[] = [
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -33,7 +29,6 @@ export function decode(inbuf: Uint8Array, channelCount: i32, blockSize: i32): Fl
     for (let i = 0; i < blockCount; i++) {
         outbufOffset = decodeBlock(inbuf, i, blockSize, outbufs, outbufOffset);
     }
-    perfLog();
 
     return outbufs;
 }
@@ -63,7 +58,6 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
     while(chunks--){
         for (let ch = 0; ch < channelCount; ch++) {
             for (let i = 0; i < 4; i++) {
-                perfStart()
                 let step: i32 = STEP_TABLE[index[ch]];
                 let delta: i32 = step >> 3;
 
@@ -108,7 +102,6 @@ export function decodeBlock(inbuf: Uint8Array, blockCount: i32, blockSize: i32, 
                 index[ch] = min(max(index[ch], 0), 88);
                 pcmData[ch] = min(max(pcmData[ch], i16.MIN_VALUE), i16.MAX_VALUE);
                 outbufs[ch][outbufOffset + (i * 2 + 1)] = <i16>pcmData[ch] / <f32>i16.MAX_VALUE;
-                perfEnd()
 
                 inbufOffset++;
             }

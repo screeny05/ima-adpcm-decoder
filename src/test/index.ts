@@ -14,26 +14,28 @@ const bufferToCanvas = (el: HTMLCanvasElement, buffer: Float32Array): void => {
     });
 };
 
-const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDecoder, js: boolean = false) => {
+const decodeTest = async (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDecoder, decoderType: string) => {
     const start = performance.now();
-    const buffer = decoder.decodeImaAdpcm(ctx, wavBuffer, js);
-    console.log(js ? 'JS:' : 'WASM:', performance.now() - start);
+    const buffer = await decoder.decodeImaAdpcm(ctx, wavBuffer, decoderType);
+    console.log(decoderType, performance.now() - start);
     return buffer;
 }
 
 (async () => {
     const ctx = new AudioContext();
 
-    const wavReq = await fetch('./multi.WAV');
+    const wavReq = await fetch('./WATER.WAV');
     const wavBuffer = await wavReq.arrayBuffer();
 
     const decoder = new AdpcmDecoder();
     await decoder.initWasm();
 
-    const audioBuffer = decodeTest(ctx, wavBuffer, decoder);
+    const audioBufferWasm = await decodeTest(ctx, wavBuffer, decoder, 'wasm');
+    const audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
+    const audioBufferJsWorker = await decodeTest(ctx, wavBuffer, decoder, 'js-worker');
 
-    const wasmData = new Float32Array(audioBuffer.getChannelData(0));
-    const jsData = new Float32Array(decodeTest(ctx, wavBuffer, decoder, true).getChannelData(0));
+    /*const wasmData = new Float32Array(audioBuffer.getChannelData(0));
+    const jsData = new Float32Array((await decodeTest(ctx, wavBuffer, decoder)).getChannelData(0));
 
     let diffCount = 0;
     wasmData.forEach((val, i) => {
@@ -45,13 +47,13 @@ const decodeTest = (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: AdpcmDec
         }
     });
 
-    console.log('total diffs', diffCount, `${Math.round(diffCount / jsData.length * 100)}%`);
+    console.log('total diffs', diffCount, `${Math.round(diffCount / jsData.length * 100)}%`);*/
 
     //bufferToCanvas(a, wasmData);
     //bufferToCanvas(c, jsData);
 
     const src = ctx.createBufferSource();
-    src.buffer = audioBuffer;
+    src.buffer = audioBufferJsWorker;
     src.connect(ctx.destination);
     src.start(0);
 

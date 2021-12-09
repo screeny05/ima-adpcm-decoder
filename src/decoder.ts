@@ -27,7 +27,7 @@ const INDEX_TABLE: number[] = [
  * @param outbufs {Float32Array[]} output buffer for decoded PCM samples
  * @param outbufOffset {number} offset at which to add samples
  */
-export const decodeImaAdpcmBlock = (inbuf: Uint8Array, outbufs: Float32Array[], outbufOffset: number): number => {
+export const decodeBlock = (inbuf: Uint8Array, outbufs: Float32Array[], outbufOffset: number): number => {
     const channels = outbufs.length;
 
     let inbufOffset = 0;

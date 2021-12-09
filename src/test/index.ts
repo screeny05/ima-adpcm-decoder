@@ -28,16 +28,22 @@ const decodeTest = async (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: Ad
     const wavBuffer = await wavReq.arrayBuffer();
 
     const decoder = new AdpcmDecoder();
-    await decoder.initWasm();
+
+    let audioBufferJs: any = null;
+    const iterations = 1;
+    const start = performance.now();
 
     const audioBufferWasm = await decodeTest(ctx, wavBuffer, decoder, 'wasm');
-    const audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
+    for (let index = 0; index < iterations; index++) {
+        audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
+    }
+    console.log('avg', (performance.now() - start) / iterations)
     const audioBufferJsWorker = await decodeTest(ctx, wavBuffer, decoder, 'js-worker');
 
-    /*const wasmData = new Float32Array(audioBuffer.getChannelData(0));
-    const jsData = new Float32Array((await decodeTest(ctx, wavBuffer, decoder)).getChannelData(0));
+    //const wasmData = new Float32Array(audioBufferWasm.getChannelData(0));
+    //const jsData = new Float32Array((await audioBufferJs).getChannelData(0));
 
-    let diffCount = 0;
+    /*let diffCount = 0;
     wasmData.forEach((val, i) => {
         const diff = Math.abs(val - jsData[i]);
         const threshold = 0.00000000001;
@@ -53,9 +59,9 @@ const decodeTest = async (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: Ad
     //bufferToCanvas(c, jsData);
 
     const src = ctx.createBufferSource();
-    src.buffer = audioBufferJsWorker;
+    src.buffer = audioBufferWasm;
     src.connect(ctx.destination);
     src.start(0);
 
-    b.addEventListener('click', () => src.stop());
+    b.addEventListener('click', () => {src.start(); src.stop();});
 })();

@@ -6,11 +6,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc --declaration",
-    "prepare": "npm run build",
-    "asproduction": "asc assembly/index.ts --target release -O3 --runtime full",
-    "asbuild": "asc assembly/index.ts --target debug --debug --runtime full --sourceMap http://localhost:1234/untouched.wasm.map",
-    "aswatch": "npm run asbuild && chokidar 'assembly/*.ts' -c 'npm run asbuild'",
-    "browser": "parcel src/test/*"
+    "asproduction": "asc assembly/index.ts --target release -O3 --runtime minimal --exportRuntime",
+    "asbuild": "asc assembly/index.ts --target debug --debug --runtime minimal --exportRuntime --sourceMap http://localhost:1234/untouched.wasm.map",
+    "aswatch": "npm run asproduction && chokidar 'assembly/*.ts' -c 'npm run asproduction && echo done'",
+    "browser": "parcel src/test/index.html"
   },
   "keywords": [
     "ima",
@@ -22,13 +21,13 @@
   "author": "Sebastian Langer <sl@scn.cx>",
   "license": "MIT",
   "devDependencies": {
-    "assemblyscript": "^0.17.2",
+    "assemblyscript": "^0.19.20",
     "chokidar-cli": "^2.1.0",
-    "parcel": "^1.12.4",
+    "parcel": "^2.0.1",
     "typescript": "^4.1.2"
   },
   "dependencies": {
-    "@assemblyscript/loader": "^0.17.2",
+    "@assemblyscript/loader": "^0.19.20",
     "regenerator-runtime": "^0.13.7",
     "wavefile": "^11.0.0"
   }

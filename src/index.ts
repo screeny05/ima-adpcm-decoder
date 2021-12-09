@@ -1,6 +1,8 @@
 import { WaveFile } from 'wavefile';
 import loader, { ASUtil, ResultObject } from '@assemblyscript/loader';
-import { decodeImaAdpcmBlock } from './decoder';
+import { decodeBlock } from './decoder';
+import { decode } from './asm-facade';
+import Bench from './bench';
 
 const WAV_FORMAT_IMA = 17;
 
@@ -24,12 +26,6 @@ interface WavDataSubchunk {
     samples: Uint8Array;
 }
 
-declare type WasmExports = {
-    Uint8Array_ID: number,
-    decode(inbufPtr: number, channelCount: number, blockSize: number): number;
-    decodeBlock(inbufPtr: number, blockCount: number, blockSize: number, outbufsPtr: number, outbufOffset: number): number;
-}
-
 interface WavData {
     channelCount: number;
     samples: Uint8Array;
@@ -46,21 +42,7 @@ const perfReset = () => {perf=0;perfCount=0;perfAccum=0;};
 const perfLog = () => console.log('p', perfAccum/perfCount);
 
 export class AdpcmDecoder {
-    wasm: ResultObject & { exports: ASUtil & WasmExports };
     workers: Worker[];
-
-    async initWasm(){
-        const asmReq = await fetch('./untouched.wasm');
-        const asmBuffer = await asmReq.arrayBuffer();
-
-        this.wasm = await loader.instantiate<WasmExports>(asmBuffer, {
-            index: {
-                log: (stringPtr: number) => console.log(__getString(stringPtr)),
-            }
-        });
-
-        const { __getString } = this.wasm.exports;
-    }
 
     /**
      * Decode a buffer containing an ADPCM wavefile into a usable AudioBuffer
@@ -80,7 +62,7 @@ export class AdpcmDecoder {
         } else if (decoder === 'js-worker'){
             await this.decodeImaAdpcmJsWorker(wav.samples, wav.blockSize, targetData);
         } else {
-            this.decodeImaAdpcmWasm(wav.samples, wav.blockSize, targetData);
+            await this.decodeImaAdpcmWasm(wav.samples, wav.blockSize, targetData);
         }
 
         return targetAudioBuffer;
@@ -104,27 +86,13 @@ export class AdpcmDecoder {
         };
     }
 
-    decodeImaAdpcmWasm(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
-        if(!this.wasm){
-            throw new Error('Wasm not initialized');
-        }
-
-        const { __retain, __release, __newArray, __getArray, __getArrayView } = this.wasm.exports;
-
-        const arrayPtr = __retain(__newArray(this.wasm.exports.Uint8Array_ID, adpcmSamples));
-        const resultPtr = this.wasm.exports.decode(arrayPtr, outbufs.length, blockSize);
-
-        __getArray(resultPtr).map((ptr, channel) => {
-            const data = __getArrayView(ptr) as Float32Array;
-            outbufs[channel].set(data);
-            __release(ptr);
-        });
-        __release(arrayPtr);
+    async decodeImaAdpcmWasm(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): Promise<void> {
+        await decode(adpcmSamples, blockSize, outbufs);
     }
 
     async decodeImaAdpcmJsWorker(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): Promise<void> {
         const workerCount = Math.min(4, navigator.hardwareConcurrency);
-        const workers = new Array(workerCount).fill(0).map(() => new Worker('./worker.ts'));
+        const workers = new Array(workerCount).fill(0).map(() => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }));
 
         const sharedBuffer = new SharedArrayBuffer(adpcmSamples.length);
         const sharedSamples = new Uint8Array(sharedBuffer);
@@ -179,9 +147,13 @@ export class AdpcmDecoder {
     decodeImaAdpcmJs(adpcmSamples: Uint8Array, blockSize: number, outbufs: Float32Array[]): void {
         const imaBlocks = chunkArrayBufferView(adpcmSamples, blockSize);
         let outbufOffset = 0;
+        const bench = new Bench();
+        bench.tick('block-js');
         imaBlocks.forEach((block, i) => {
-            outbufOffset = decodeImaAdpcmBlock(block, outbufs, outbufOffset);
+            outbufOffset = decodeBlock(block, outbufs, outbufOffset);
         });
+        bench.tockCount('block-js', imaBlocks.length);
+        bench.tockAvg('block-js');
     }
 }
 

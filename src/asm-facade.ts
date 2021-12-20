@@ -1,5 +1,4 @@
 import loader, { ASUtil, ResultObject } from '@assemblyscript/loader';
-import { AsyncDecoderFacade } from 'src';
 import Bench from './bench';
 
 declare type WasmExports = {
@@ -10,7 +9,7 @@ declare type WasmExports = {
 
 let wasm: ResultObject & { exports: ASUtil & WasmExports }|null = null;
 
-async function init(): Promise<void> {
+export async function init(): Promise<void> {
     if(wasm){
         return;
     }
@@ -38,13 +37,11 @@ export async function decode(samples: Uint8Array, blockSize: number, outbufs: Fl
     if(!wasm){ await init(); }
     if(!wasm){ throw new Error('Wasm not initialized'); }
 
-    const { __newArray, __getArray, __getArrayView, __collect, Uint8Array_ID } = wasm.exports;
+    const { __newArray, __getArray, __getArrayView, __collect, Uint8Array_ID, __newArrayBuffer } = wasm.exports;
     const { decode } = wasm.exports;
 
-    const arrayPtr = __newArray(Uint8Array_ID, samples);
-    const start = performance.now();
+    const arrayPtr = __newArrayBuffer(samples.buffer);
     const resultPtr = decode(arrayPtr, outbufs.length, blockSize);
-    console.log('collect', performance.now() - start);
 
     __getArray(resultPtr).map((ptr, channel) => {
         const data = __getArrayView(ptr) as Float32Array;

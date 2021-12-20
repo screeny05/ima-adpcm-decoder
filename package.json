@@ -6,9 +6,11 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc --declaration",
-    "asproduction": "asc assembly/index.ts --target release -O3 --runtime minimal --exportRuntime",
-    "asbuild": "asc assembly/index.ts --target debug --debug --runtime minimal --exportRuntime --sourceMap http://localhost:1234/untouched.wasm.map",
-    "aswatch": "npm run asproduction && chokidar 'assembly/*.ts' -c 'npm run asproduction && echo done'",
+    "asc:production": "asc assembly/index.ts --target release -O3 --runtime minimal --exportRuntime",
+    "asc:build": "asc assembly/index.ts --target debug --debug --runtime minimal --exportRuntime --sourceMap http://localhost:1234/untouched.wasm.map",
+    "asc:watch": "npm run asc:production && chokidar 'assembly/*.ts' -c 'npm run asc:production && echo done'",
+    "rs:dev": "wasm-pack build --target web rust",
+    "rs:watch": "npm run rs:dev && chokidar 'rust/**/*.rs' -c 'npm run rs:dev && echo done'",
     "browser": "parcel src/test/index.html"
   },
   "keywords": [
@@ -28,6 +30,7 @@
   },
   "dependencies": {
     "@assemblyscript/loader": "^0.19.20",
+    "binary-parser": "^2.0.2",
     "regenerator-runtime": "^0.13.7",
     "wavefile": "^11.0.0"
   }

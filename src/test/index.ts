@@ -1,4 +1,5 @@
 import 'regenerator-runtime/runtime';
+import { init } from '../asm-facade';
 import { AdpcmDecoder } from '..';
 
 const bufferToCanvas = (el: HTMLCanvasElement, buffer: Float32Array): void => {
@@ -33,12 +34,16 @@ const decodeTest = async (ctx: AudioContext, wavBuffer: ArrayBuffer, decoder: Ad
     const iterations = 1;
     const start = performance.now();
 
+    await init();
+
     const audioBufferWasm = await decodeTest(ctx, wavBuffer, decoder, 'wasm');
-    for (let index = 0; index < iterations; index++) {
-        audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
-    }
-    console.log('avg', (performance.now() - start) / iterations)
+    audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
     const audioBufferJsWorker = await decodeTest(ctx, wavBuffer, decoder, 'js-worker');
+    //for (let index = 0; index < iterations; index++) {
+    //    audioBufferJs = await decodeTest(ctx, wavBuffer, decoder, 'js');
+    //}
+    //console.log('avg', (performance.now() - start) / iterations)
+    //const audioBufferJsWorker = await decodeTest(ctx, wavBuffer, decoder, 'js-worker');
 
     //const wasmData = new Float32Array(audioBufferWasm.getChannelData(0));
     //const jsData = new Float32Array((await audioBufferJs).getChannelData(0));

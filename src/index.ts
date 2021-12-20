@@ -1,30 +1,9 @@
-import { WaveFile } from 'wavefile';
-import loader, { ASUtil, ResultObject } from '@assemblyscript/loader';
 import { decodeBlock } from './decoder';
 import { decode } from './asm-facade';
 import Bench from './bench';
+import WaveParser, { WaveFile } from './wave-parser';
 
 const WAV_FORMAT_IMA = 17;
-
-interface WavFmtSubchunk {
-    chunkId: 'fmt ';
-    chunkSize: number;
-    audioFormat: number;
-    bitsPerSample: number;
-    blockAlign: number;
-    byteRate: number;
-    cbSize: number;
-    dwChannelMask: number;
-    numChannels: number;
-    sampleRate: number;
-    validBitsPerSample: number;
-}
-
-interface WavDataSubchunk {
-    chunkId: 'data';
-    chunkSize: number;
-    samples: Uint8Array;
-}
 
 interface WavData {
     channelCount: number;
@@ -32,14 +11,6 @@ interface WavData {
     blockSize: number;
     sampleRate: number
 }
-
-let perf = 0;
-let perfCount = 0;
-let perfAccum = 0;
-const perfStart = () => {perf = performance.now();perfCount++;};
-const perfEnd = () => perfAccum += performance.now() - perf;
-const perfReset = () => {perf=0;perfCount=0;perfAccum=0;};
-const perfLog = () => console.log('p', perfAccum/perfCount);
 
 export class AdpcmDecoder {
     workers: Worker[];
@@ -69,20 +40,19 @@ export class AdpcmDecoder {
     }
 
     extractWav(buffer: ArrayBuffer): WavData {
-        const wav = new WaveFile(new Uint8Array(buffer));
+        const wav = WaveParser.parse(new Uint8Array(buffer)) as WaveFile;
 
-        const fmt = wav.fmt as WavFmtSubchunk;
-        const data = wav.data as WavDataSubchunk;
+        const { fmt, data } = wav.subchunks;
 
-        if(fmt.audioFormat !== WAV_FORMAT_IMA){
+        if(fmt.subchunkData.audioFormat !== WAV_FORMAT_IMA){
             throw new TypeError('Given wav buffer is not of format IMA ADPCM');
         }
 
         return {
-            channelCount: fmt.numChannels,
-            samples: data.samples,
-            blockSize: fmt.blockAlign,
-            sampleRate: fmt.sampleRate
+            channelCount: fmt.subchunkData.numChannels,
+            samples: new Uint8Array(data.subchunkData.samples),
+            blockSize: fmt.subchunkData.blockAlign,
+            sampleRate: fmt.subchunkData.sampleRate
         };
     }
 

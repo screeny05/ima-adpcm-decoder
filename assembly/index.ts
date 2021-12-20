@@ -24,7 +24,8 @@ const INDEX_TABLE: StaticArray<i8> = StaticArray.fromArray<i8>([
     -1, -1, -1, -1, 2, 4, 6, 8,
 ]);
 
-export function decode(inbuf: Uint8Array, channelCount: i32, blockSize: i32): StaticArray<f32>[] {
+export function decode(_inbuf: ArrayBuffer, channelCount: i32, blockSize: i32): StaticArray<f32>[] {
+    const inbuf = Uint8Array.wrap(_inbuf);
     const blockCount = <i32>Math.floor(inbuf.length / blockSize);
     let outbufOffset = 0;
     const outbufs: StaticArray<f32>[] = [];
@@ -35,14 +36,11 @@ export function decode(inbuf: Uint8Array, channelCount: i32, blockSize: i32): St
         outbufs.push(new StaticArray<f32>(inbuf.length * 2 / channelCount));
     }
 
-    tick('block-asm');
     for (let i = 0; i < blockCount; i++) {
         pcmData.fill(0);
         index.fill(0);
         outbufOffset = decodeBlock(inbuf, i, blockSize, outbufs, outbufOffset, pcmData, index);
     }
-    tockCount('block-asm', blockCount);
-    tockAvg('block-asm');
 
     return outbufs;
 }
@@ -70,7 +68,7 @@ export function decodeBlock(
         unchecked(outbufs[ch][outbufOffset] = <i16><i32>pcmValue / <f32>i16.MAX_VALUE);
         unchecked(index[ch] = indexValue);
 
-        if(indexValue < 0 || indexValue > 88 || unchecked(inbuf[inbufOffset + 3]) !== 0){
+        if (indexValue < 0 || indexValue > 88 || unchecked(inbuf[inbufOffset + 3]) !== 0) {
             throw new Error('Something is wrong with your wav');
         }
         inbufOffset += 4;
@@ -79,7 +77,7 @@ export function decodeBlock(
 
     let chunks = (blockSize - inbufOffset + blockStart) / (channelCount * 4);
 
-    while(chunks--){
+    while (chunks--){
         for (let ch = 0; ch < channelCount; ch++) {
             for (let i = 0; i < 4; i++) {
                 // Sample 1
@@ -87,16 +85,16 @@ export function decodeBlock(
                 let delta: i32 = step >> 3;
 
                 let data: i8 = unchecked(inbuf[inbufOffset]);
-                if(data & 1){
+                if (data & 1) {
                     delta += (step >> 2);
                 }
-                if(data & 2){
+                if (data & 2) {
                     delta += (step >> 1);
                 }
-                if(data & 4){
+                if (data & 4) {
                     delta += step;
                 }
-                if(data & 8){
+                if (data & 8) {
                     delta = -delta;
                 }
                 unchecked(pcmData[ch] += delta);
@@ -109,16 +107,16 @@ export function decodeBlock(
                 step = unchecked(STEP_TABLE[index[ch]]);
                 delta = step >> 3;
 
-                if(data & 0x10){
+                if (data & 0x10) {
                     delta += (step >> 2);
                 }
-                if(data & 0x20){
+                if (data & 0x20) {
                     delta += (step >> 1);
                 }
-                if(data & 0x40){
+                if (data & 0x40) {
                     delta += step;
                 }
-                if(data & 0x80){
+                if (data & 0x80) {
                     delta = -delta;
                 }
 
